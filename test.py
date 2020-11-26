@@ -70,6 +70,13 @@ def test_fromArray():
         assert tmp_arr[i] == Seq.nth(arr_seq1,i)
 
 
+def test_fromStringArray():
+    tmp_arr = ["abc", "cde"]
+    arr_seq1 = Seq.fromArray(tmp_arr)
+
+    for i, elem in enumerate(arr_seq1):
+        assert elem == tmp_arr[i]
+
 @timeit
 def test_tabulate_parallel():
     arr_seq1 = Seq.tabulate(plus_one, 20000)
@@ -230,7 +237,8 @@ def test():
     test_fromList()
     test_toArray()
     test_fromArray()
-    
+    test_fromStringArray()
+
     test_rev()
     test_append()
     test_map()
@@ -249,6 +257,7 @@ def test():
     test_scanIncl_sequential()
     test_scanIncl_parallel()
     
+
     print("All tests passed!")
 
 

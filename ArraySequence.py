@@ -3,6 +3,7 @@ from ctypes import Structure
 from seq_lambdas import *
 from seq_const import * 
 from structs import *
+import ctypes
 import sys
 import math
 import functools
@@ -57,14 +58,14 @@ class ArraySeq(object):
 
     def _empty(self):
         self.arr = Array("i", 0, lock=False)
-        # self.arr = Array(ctypes.c_wchar_p, ['string']) #for string
 
     @classmethod
     def singleton(cls, x):
         return ArraySeq(SINGLETON, x)
 
     def _singleton(self, x):
-        self.arr = Array("i", 1, lock=False)
+        seq_type = types.c_wchar_p if isinstance(x, str) else "i"
+        self.arr = Array(seq_type, 1, lock=False)
         self.arr[0] = x
 
     @classmethod
@@ -92,7 +93,11 @@ class ArraySeq(object):
             cur_node = cur_node.next
             cnt += 1
         cur_node = head_node
-        self.arr = Array('i', cnt, lock=False)
+        if cnt == 0:
+            raise Exception("Cannot create Seq from empty list")
+
+        seq_type = ctypes.c_wchar_p if isinstance(head_node.val, str) else "i"
+        self.arr = Array(seq_type, cnt, lock=False)
 
         i = 0
         while cur_node != None:
@@ -105,7 +110,11 @@ class ArraySeq(object):
         return ArraySeq(FROM_ARRAY, arr)
 
     def _fromArray(self, arr):
-        self.arr = Array('i', arr, lock=False)
+        if len(arr) == 0:
+            raise Exception("Cannot create Seq from empty array")
+
+        seq_type = ctypes.c_wchar_p if isinstance(arr[0], str) else "i"
+        self.arr = Array(seq_type, arr, lock=False)
 
     @classmethod
     def toArray(cls, S):
@@ -122,10 +131,12 @@ class ArraySeq(object):
         return ArraySeq(TABULATE, f, n, force_sequential)
 
     def _tabulate(self, f, n, force_sequential=False):
+        seq_type = ctypes.c_wchar_p if isinstance(f(0), str) else "i"
+
         if force_sequential:
-            self.arr = Array('i', [f(i) for i in range(n)], lock=False)
+            self.arr = Array(seq_type, [f(i) for i in range(n)], lock=False)
         else:
-            result_shared = Array('i', n, lock=False)
+            result_shared = Array(seq_type, n, lock=False)
             segment_len = math.ceil(n / NUM_PROCESSORS)
             processes = []
             for i in range(NUM_PROCESSORS):
@@ -175,11 +186,18 @@ class ArraySeq(object):
 
     def _inject(self, inject_pos, inject_val):
         assert inject_val._length() == inject_pos._length()
+        if inject_pos._length() == 0 or inject_val._length() == 0:
+            raise Exception("Injection sequence cannot be empty")
+        elif any([(num < 0 or num >= len(self.arr)) for num in inject_pos]):
+            raise Exception("Index out of bound")
+
+
         processes = []
         n = inject_val._length()
         segment_len = math.ceil(n / NUM_PROCESSORS)
+        seq_type = ctypes.c_wchar_p if isinstance(inject_val.arr[0], str) else "i"
 
-        result_shared = Array('i', ArraySeq.toArray(self), lock=False)
+        result_shared = Array(seq_type, ArraySeq.toArray(self), lock=False)
         for i in range(NUM_PROCESSORS):
             p = Process(target=inject_lambda, args=(result_shared, inject_pos.arr, inject_val.arr, segment_len * i, min((i + 1) * segment_len, n)))
             p.start()
@@ -195,9 +213,13 @@ class ArraySeq(object):
 
     def _subseq(self, start_and_length):
         start_idx, n = start_and_length
+        if not (1 <= n <= len(self.arr)) or not (0 <= start_idx < len(self.arr)) or not((start_idx + n) <= len(self.arr)):
+            raise Exception("Index out of bound")
         segment_len = math.ceil(n / NUM_PROCESSORS)
         processes = []
-        result_shared = Array('i', n, lock=False)
+        seq_type = ctypes.c_wchar_p if isinstance(self.arr[0], str) else "i"
+        result_shared = Array(seq_type, n, lock=False)
+
         for i in range(NUM_PROCESSORS):
             p = Process(target=subseq_lambda, args=(result_shared, self.arr, start_idx, segment_len * i, min((i + 1) * segment_len, n)))
             p.start()
@@ -206,8 +228,7 @@ class ArraySeq(object):
         for p in processes:
             p.join()
 
-        if not (n >= 1 and n <= len(self.arr)) or not (start_idx >= 0 and start_idx < len(self.arr)) or not((start_idx + n) <= len(self.arr)):
-            raise Exception("Index out of bound")
+        
         return ArraySeq(SHARED_ARRAY, result_shared)
 
     @classmethod
@@ -226,6 +247,8 @@ class ArraySeq(object):
 
     @classmethod
     def filter(cls, f, S, force_sequential=False):
+        if S._length() == 0:
+            return ArraySeq.empty()
         return S._filter(f, force_sequential)
 
     def _filter(self, f, force_sequential=False):
@@ -243,7 +266,9 @@ class ArraySeq(object):
         arr_seq_form = ArraySeq(FROM_ARRAY, ans)
         pref_sum = ArraySeq.scanIncl(add_lambda, 0, arr_seq_form)
 
-        result = Array('i', pref_sum.arr[-1],lock=False)
+        seq_type = ctypes.c_wchar_p if isinstance(self.arr[0], str) else "i"
+        result = Array(seq_type, pref_sum.arr[-1],lock=False)
+
         segment_len = math.ceil(n / NUM_PROCESSORS)
 
         for i in range(NUM_PROCESSORS):
@@ -262,12 +287,16 @@ class ArraySeq(object):
         for num in self:
             if f(num):
                 res.append(num)
-        res_shared_form = Array('i', res, lock=False)
+
+        seq_type = ctypes.c_wchar_p if isinstance(self.arr[0], str) else "i"
+        res_shared_form = Array(seq_type, res, lock=False)
         filtered_seq = ArraySeq(FROM_ARRAY, res_shared_form)
         return filtered_seq
 
     @classmethod
     def filterIdx(cls, f, S, force_sequential=False):
+        if S._length() == 0:
+            return ArraySeq.empty()
         return S._filterIdx(f, force_sequential)
 
     def _filterIdx_sequential(self, f):
@@ -275,7 +304,9 @@ class ArraySeq(object):
         for i, num in enumerate(self):
             if f(num):
                 res.append(i)
-        res_shared_form = Array('i', res, lock=False)
+
+        seq_type = ctypes.c_wchar_p if isinstance(self.arr[0], str) else "i"
+        res_shared_form = Array(seq_type, res, lock=False)
         filtered_seq = ArraySeq(FROM_ARRAY, res_shared_form)
         return filtered_seq
 
@@ -294,7 +325,8 @@ class ArraySeq(object):
         arr_seq_form = ArraySeq(FROM_ARRAY, ans)
         pref_sum = ArraySeq.scanIncl(add_lambda, 0, arr_seq_form)
 
-        result = Array('i', pref_sum.arr[-1],lock=False)
+        seq_type = ctypes.c_wchar_p if isinstance(self.arr[0], str) else "i"
+        result = Array(seq_type, pref_sum.arr[-1],lock=False)
         segment_len = math.ceil(n / NUM_PROCESSORS)
 
         for i in range(NUM_PROCESSORS):
@@ -310,7 +342,12 @@ class ArraySeq(object):
 
     @classmethod
     def scanIncl(cls, f, b, S, force_sequential=False):
-        prefs = Array('i', len(S.arr), lock=False)
+        if S._length() == 0:
+            return ArraySeq.empty()
+
+        seq_type = ctypes.c_wchar_p if isinstance(f(b, S.arr[0]), str) else "i"
+        prefs = Array(seq_type, len(S.arr), lock=False)
+
         array_native = ArraySeq.toArray(S)
         if len(S.arr) < GRANULAR or force_sequential:
             S._scanIncl_sequential(prefs, array_native, f, b, 0, len(S.arr)) 
