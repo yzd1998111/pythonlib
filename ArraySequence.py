@@ -64,7 +64,7 @@ class ArraySeq(object):
         return ArraySeq(SINGLETON, x)
 
     def _singleton(self, x):
-        seq_type = types.c_wchar_p if isinstance(x, str) else "i"
+        seq_type = ctypes.c_wchar_p if isinstance(x, str) else "i"
         self.arr = Array(seq_type, 1, lock=False)
         self.arr[0] = x
 
@@ -133,7 +133,7 @@ class ArraySeq(object):
     def _tabulate(self, f, n, force_sequential=False):
         seq_type = ctypes.c_wchar_p if isinstance(f(0), str) else "i"
 
-        if force_sequential:
+        if n < GRANULAR or force_sequential:
             self.arr = Array(seq_type, [f(i) for i in range(n)], lock=False)
         else:
             result_shared = Array(seq_type, n, lock=False)
@@ -186,16 +186,25 @@ class ArraySeq(object):
 
     def _inject(self, inject_pos, inject_val):
         assert inject_val._length() == inject_pos._length()
-        if inject_pos._length() == 0 or inject_val._length() == 0:
+        n = inject_val._length()
+        seq_type = ctypes.c_wchar_p if isinstance(inject_val.arr[0], str) else "i"
+        
+        if n == 0:
             raise Exception("Injection sequence cannot be empty")
         elif any([(num < 0 or num >= len(self.arr)) for num in inject_pos]):
             raise Exception("Index out of bound")
-
+        elif n < GRANULAR:
+            result_shared = Array(seq_type, len(self.arr), lock=False)
+            for i, num in enumerate(self.arr):
+                result_shared[i] = num
+            for pos, val in zip(inject_pos.arr, inject_val.arr):
+                result_shared[pos] = val 
+            return ArraySeq(SHARED_ARRAY, result_shared)
 
         processes = []
-        n = inject_val._length()
+        
         segment_len = math.ceil(n / NUM_PROCESSORS)
-        seq_type = ctypes.c_wchar_p if isinstance(inject_val.arr[0], str) else "i"
+        
 
         result_shared = Array(seq_type, ArraySeq.toArray(self), lock=False)
         for i in range(NUM_PROCESSORS):
@@ -215,8 +224,13 @@ class ArraySeq(object):
         start_idx, n = start_and_length
         if not (1 <= n <= len(self.arr)) or not (0 <= start_idx < len(self.arr)) or not((start_idx + n) <= len(self.arr)):
             raise Exception("Index out of bound")
+
+        if n < GRANULAR:
+            return ArraySeq(SHARED_ARRAY, self.arr[start_idx:start_idx+n])
+        
         segment_len = math.ceil(n / NUM_PROCESSORS)
         processes = []
+
         seq_type = ctypes.c_wchar_p if isinstance(self.arr[0], str) else "i"
         result_shared = Array(seq_type, n, lock=False)
 
@@ -228,7 +242,6 @@ class ArraySeq(object):
         for p in processes:
             p.join()
 
-        
         return ArraySeq(SHARED_ARRAY, result_shared)
 
     @classmethod
@@ -370,7 +383,6 @@ class ArraySeq(object):
             segment_len = math.ceil(n / NUM_PROCESSORS)
 
             partial_sums = ArraySeq.tabulate(functools.partial(scanIncl_lambda,array_native, f, b), NUM_PROCESSORS)
-
             middle_scan_result = ArraySeq.scanIncl(f, b, partial_sums)
 
             for i in range(NUM_PROCESSORS):
@@ -381,6 +393,20 @@ class ArraySeq(object):
             for p in processes:
                 p.join()
 
+    @classmethod
+    def splitMid(cls, S):
+        return S._splitMid()
+
+    def _splitMid(self):
+        n = self._length()
+        if n == 0:
+            return ArraySeq.empty()
+        elif n == 0:
+            return ArraySeq.singleton(self.arr[0])
+        else:
+            mid = math.ceil(n / 2)
+            l, r = ArraySeq.take(self, mid), ArraySeq.drop(self, mid)
+            return (l, r)
 
     def __repr__(self):
         return ",".join(map(str,self.arr))
