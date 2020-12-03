@@ -25,11 +25,8 @@ class ArraySeq(object):
             assert len(args) == 1 
             self._singleton(args[0]) 
         elif init_method == TABULATE:
-            assert len(args) == 2 or len(args) == 3
-            if len(args) == 2:
-                self._tabulate(args[0], args[1])
-            else:
-                self._tabulate(args[0], args[1], args[2])
+            assert len(args) == 2 or len(args) == 3 or len(args) == 4
+            self._tabulate(*args)
         elif init_method == SHARED_ARRAY:
             self.arr = args[0]
         elif init_method == EMPTY:
@@ -127,13 +124,13 @@ class ArraySeq(object):
         return arr  
 
     @classmethod
-    def tabulate(cls, f, n, force_sequential=False):
-        return ArraySeq(TABULATE, f, n, force_sequential)
+    def tabulate(cls, f, n, force_sequential=False, force_parallel=False):
+        return ArraySeq(TABULATE, f, n, force_sequential, force_parallel)
 
-    def _tabulate(self, f, n, force_sequential=False):
+    def _tabulate(self, f, n, force_sequential=False, force_parallel=False):
         seq_type = ctypes.c_wchar_p if isinstance(f(0), str) else "i"
 
-        if n < GRANULAR or force_sequential:
+        if (n < GRANULAR or force_sequential) and not force_parallel:
             self.arr = Array(seq_type, [f(i) for i in range(n)], lock=False)
         else:
             result_shared = Array(seq_type, n, lock=False)
@@ -382,9 +379,9 @@ class ArraySeq(object):
             n = high - low
             segment_len = math.ceil(n / NUM_PROCESSORS)
 
-            partial_sums = ArraySeq.tabulate(functools.partial(scanIncl_lambda,array_native, f, b), NUM_PROCESSORS)
+            partial_sums = ArraySeq.tabulate(functools.partial(scanIncl_lambda,array_native, f, b), NUM_PROCESSORS, force_parallel=True)
             middle_scan_result = ArraySeq.scanIncl(f, b, partial_sums)
-
+   
             for i in range(NUM_PROCESSORS):
                 p = Process(target=self._scanIncl_sequential, args=(prefs, array_native, f, middle_scan_result.arr[i-1] if i > 0 else 0, i * segment_len, min((i + 1) * segment_len, high)))
                 p.start()
